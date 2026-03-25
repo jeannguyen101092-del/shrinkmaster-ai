@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>ShrinkMaster AI – Hệ Thống Dự Đoán & Quản Lý Độ Co Vải</title>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body{font-family:Arial;background:#eef1f5;margin:0;}
+        header{background:#1a73e8;color:white;padding:16px 20px;font-size:20px;font-weight:bold;display:flex;justify-content:space-between;align-items:center;}
+        .container{display:flex;gap:20px;padding:20px;}
+        .left{width:340px;background:white;padding:16px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,0.1);}
+        .right{flex:1;background:white;padding:16px;border-radius:8px;box-shadow:0 2px 5px rgba(0,0,0,0.1);}
+        input,select,button{width:100%;padding:10px;margin-top:6px;margin-bottom:12px;border:1px solid #ccc;border-radius:4px;box-sizing:border-box;}
+        button{border:none;cursor:pointer;font-weight:bold;transition:0.3s;color:white;}
+        button:hover{opacity:0.8;}
+        .primary{background:#1a73e8;} .green{background:#34a853;} .red{background:#ea4335;} .purple{background:#673ab7;}
+        table{width:100%;border-collapse:collapse;margin-top:10px;}
+        th,td{border:1px solid #ddd;padding:8px;font-size:12px;text-align:center;}
+        th{background:#f1f1f1;}
+        .stat{display:flex;gap:15px;margin-bottom:15px;}
+        .box{background:#f7f9fc;padding:15px;border-radius:6px;flex:1;text-align:center;border:1px solid #d1d9e6;}
+        .box span{font-size:18px;font-weight:bold;color:#1a73e8;}
+        #status{font-weight:bold;margin-bottom:10px;color:#34a853;font-size:13px;}
+    </style>
+</head>
+<body>
+
+<!-- 1. MÀN HÌNH ĐĂNG NHẬP -->
+<div id="loginOverlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:#f0f2f5; display:flex; justify-content:center; align-items:center; z-index:9999;">
+    <div style="background:white; padding:30px; border-radius:12px; box-shadow:0 10px 25px rgba(0,0,0,0.1); width:320px; text-align:center;">
+        <h2 style="color:#1a73e8; margin-bottom:20px;">PNC-DN LOGIN</h2>
+        <input type="text" id="userInput" placeholder="Tên đăng nhập">
+        <input type="password" id="passInput" placeholder="Mật khẩu">
+        <button onclick="handleLogin()" class="primary">ĐĂNG NHẬP</button>
+        <p id="loginError" style="color:red; font-size:12px; margin-top:10px; display:none;">Sai tài khoản hoặc mật khẩu!</p>
+    </div>
+</div>
+
+<!-- 2. NỘI DUNG CHÍNH -->
+<div id="mainApp" style="display:none;">
+    <header>
+       <span style="color: #ffeb3b;">⚡ ShrinkMaster AI</span> 
+        <button onclick="handleLogout()" style="background:#ea4335; width:auto; padding:5px 15px; font-size:13px;">Đăng xuất</button>
+    </header>
+
+    <div class="container">
+        <div class="left">
+            <div id="status">🟢 DATABASE ONLINE</div>
+            <h3>TÌM KIẾM</h3>
+            <input id="searchBox" placeholder="Tìm Mã / Loại / Thành phần...">
+
+            <h3>THÊM / SỬA VẢI</h3>
+            <input id="code" placeholder="Mã vải">
+            <input id="type" placeholder="Loại vải (denim, khaki...)">
+            <input id="comp" placeholder="Thành phần (98/2, spandex...)">
+            <input id="width" placeholder="Khổ vải">
+            <input id="shrinkL" placeholder="Khoảng co Dọc L %">
+            <input id="shrinkW" placeholder="Khoảng co Ngang W %">
+
+            <select id="wash" onchange="predictAI()">
+                <option value="raw">Raw / No Wash</option>
+                <option value="rinse">Rinse Wash</option>
+                <option value="enzyme">Enzyme Wash</option>
+                <option value="stone">Stone Wash</option>
+                <option value="bleach">Bleach Wash</option>
+                <option value="acid">Acid Wash</option>
+                <option value="heavy">Heavy Vintage Wash</option>
+            </select>
+
+            <button onclick="predictAI()" class="purple">🤖 AI DỰ ĐOÁN DAO ĐỘNG</button>
+            <button onclick="saveFabric()" class="green">💾 LƯU CLOUD</button>
+            <button onclick="deleteFabric()" class="red">🗑️ XÓA MÃ VẢI</button>
+
+            <hr>
+            <h3>IMPORT / EXPORT</h3>
+            <input type="file" id="excelFile" accept=".xlsx, .xls">
+            <button onclick="importExcel()" class="primary">📤 IMPORT EXCEL</button>
+            <button onclick="exportExcel()" class="green">📥 EXPORT DATABASE</button>
+        </div>
+
+        <div class="right">
+            <div class="stat">
+                <div class="box">Tổng số vải: <span id="totalFabric">0</span></div>
+                <div class="box">Số loại vải: <span id="totalType">0</span></div>
+            </div>
+            <h3>DANH SÁCH VẢI TRÊN HỆ THỐNG</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Mã</th>
+                        <th>Loại</th>
+                        <th>Thành phần</th>
+                        <th>Wash</th>
+                        <th>Khổ</th>
+                        <th>Actual L</th>
+                        <th>Actual W</th>
+                        <th>Sửa</th>
+                    </tr>
+                </thead>
+                <tbody id="fabricTable"></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- ĐĂNG NHẬP ---
+const VALID_USER = "admin", VALID_PASS = "123456";
+window.onload = () => { if (localStorage.getItem("pnc_auth") === "true") showApp(); };
+function handleLogin() {
+    const u = document.getElementById("userInput").value, p = document.getElementById("passInput").value;
+    if (u === VALID_USER && p === VALID_PASS) { localStorage.setItem("pnc_auth", "true"); showApp(); }
+    else document.getElementById("loginError").style.display = "block";
+}
+function showApp() { document.getElementById("loginOverlay").style.display = "none"; document.getElementById("mainApp").style.display = "block"; }
+function handleLogout() { localStorage.removeItem("pnc_auth"); location.reload(); }
+
+// --- DATABASE ---
+var firebaseConfig = {
+    apiKey: "AIzaSyBidohoJ8rkme_9pnfH7iP72BKf3Bsj44o",
+    authDomain: "pnc-dn-system.firebaseapp.com",
+    databaseURL: "https://pnc-dn-system-default-rtdb.firebaseio.com",
+    projectId: "pnc-dn-system"
+};
+if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+var db = firebase.database();
+let fabricCache = [];
+
+db.ref("fabrics").on("value", snap => {
+    const data = snap.val();
+    fabricCache = data ? Object.values(data) : [];
+    renderTable(fabricCache);
+    document.getElementById("totalFabric").innerText = fabricCache.length;
+    document.getElementById("totalType").innerText = [...new Set(fabricCache.map(f => f.type))].length;
+});
+
+function renderTable(list) {
+    const table = document.getElementById("fabricTable");
+    table.innerHTML = "";
+    [...list].sort((a,b) => (b.timestamp||0) - (a.timestamp||0)).forEach(f => {
+        table.innerHTML += `<tr>
+            <td><b>${f.code||""}</b></td><td>${f.type||""}</td><td>${f.comp||""}</td>
+            <td>${f.wash||""}</td><td>${f.width||""}</td>
+            <td>${f.shrinkL||"0"}%</td><td>${f.shrinkW||"0"}%</td>
+            <td><button onclick="editFabric('${f.code}')" class="primary" style="width:auto; padding:4px 8px; font-size:10px;">SỬA</button></td>
+        </tr>`;
+    });
+}
+
+// --- AI DỰ ĐOÁN KHOẢNG (RANGE) ---
+function predictAI() {
+    const t = document.getElementById("type").value.toLowerCase(), c = document.getElementById("comp").value.toLowerCase();
+    const wText = document.getElementById("wash").options[document.getElementById("wash").selectedIndex].text;
+    if (!t || !c) { alert("Nhập Loại và Thành phần!"); return; }
+
+    const isRaw = wText.toLowerCase().includes("raw");
+    let same = fabricCache.filter(f => (f.type||"").toLowerCase().includes(t) && (f.comp||"").toLowerCase().includes(c));
+    let rL = "0 - 0", rW = "0 - 0";
+
+    if (isRaw) { rL = "1.0 - 1.5"; rW = "1.2 - 1.8"; }
+    else {
+        const washed = same.filter(f => !f.wash.toLowerCase().includes("raw"));
+        const factors = { "heavy": 1.25, "stone": 1.1, "enzyme": 1.0, "rinse": 0.85 };
+        let f = factors.stone;
+        if (wText.includes("Heavy")) f = factors.heavy; else if (wText.includes("Enzyme")) f = factors.enzyme;
+
+        if (washed.length > 0) {
+            const allL = washed.map(i => parseFloat(i.shrinkL) || 3.5), allW = washed.map(i => parseFloat(i.shrinkW) || 12.0);
+            rL = `${(Math.min(...allL)*f/1.1).toFixed(1)} - ${(Math.max(...allL)*f/1.1).toFixed(1)}`;
+            rW = `${(Math.min(...allW)*f/1.1).toFixed(1)} - ${(Math.max(...allW)*f/1.1).toFixed(1)}`;
+        } else {
+            let bW = c.includes("spandex") ? 14.5 : 6.0;
+            rL = `${(3.5*f-0.5).toFixed(1)} - ${(3.5*f+0.5).toFixed(1)}`;
+            rW = `${(bW*f-1.5).toFixed(1)} - ${(bW*f+1.5).toFixed(1)}`;
+        }
+    }
+    document.getElementById("shrinkL").value = rL; document.getElementById("shrinkW").value = rW;
+// Tiếp tục đoạn code predictAI() của bạn:
+    if (currentWashText.toLowerCase().includes("wash")) {
+        // Thuật toán: Lấy trung bình cộng độ co của các mẫu vải cùng loại & thành phần trong DB
+        if (filteredFabrics.length > 0) {
+            let sumL = 0, sumW = 0;
+            filteredFabrics.forEach(f => {
+                sumL += parseFloat(f.shrinkL || 0);
+                sumW += parseFloat(f.shrinkW || 0);
+            });
+            finalL = (sumL / filteredFabrics.length).toFixed(2);
+            finalW = (sumW / filteredFabrics.length).toFixed(2);
+            
+            document.getElementById("status").innerHTML = `🤖 AI GỢI Ý: Dựa trên ${filteredFabrics.length} mẫu tương đương`;
+        } else {
+            // Nếu chưa có dữ liệu mẫu, dùng tỷ lệ mặc định theo loại wash
+            const washRates = { "raw": 0, "rinse": 2, "enzyme": 3, "stone": 4, "bleach": 4, "acid": 5, "heavy": 6 };
+            const baseRate = washRates[washSelect.value] || 0;
+            finalL = baseRate;
+            finalW = (baseRate * 0.7).toFixed(2); // Thường co ngang ít hơn co dọc
+            
+            document.getElementById("status").innerHTML = `⚠️ Dữ liệu mới - AI đang dự đoán theo hệ số Wash`;
+        }
+
+        // Đổ kết quả vào ô nhập liệu
+        document.getElementById("shrinkL").value = finalL;
+        document.getElementById("shrinkW").value = finalW;
+        
+        // Hiệu ứng đổi màu để người dùng biết AI vừa nhảy số
+        document.getElementById("shrinkL").style.background = "#e8f0fe";
+        document.getElementById("shrinkW").style.background = "#e8f0fe";
+    }
+}
+
+
+// --- EXCEL ---
+function exportExcel() {
+    const ws = XLSX.utils.json_to_sheet(fabricCache);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Fabrics");
+    XLSX.writeFile(wb, "PNC_Fabric_Database.xlsx");
+}
+
+function importExcel() {
+    const file = document.getElementById("excelFile").files[0];
+    if (!file) return alert("Chọn file Excel!");
+    const reader = new FileReader();
+    reader.onload = e => {
+        const data = new Uint8Array(e.target.result);
+        const wb = XLSX.read(data, {type: 'array'});
+        const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+        rows.forEach(r => {
+            const code = (r.Code || r.code || r["Mã"] || "").toString().toUpperCase();
+            if (code) db.ref("fabrics/" + code).set({
+                code: code, type: r.Type || r["Loại"] || "", comp: r.Composition || r["Thành phần"] || "",
+                width: r.Width || r["Khổ"] || "", shrinkL: r.ActualL || r["Actual L"] || 0,
+                shrinkW: r.ActualW || r["Actual W"] || 0, wash: r.Wash || r["Wash"] || "", timestamp: new Date().getTime()
+            });
+        });
+        alert("Import xong!");
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+// --- KHÁC ---
+function saveFabric() {
+    const c = document.getElementById("code").value.trim().toUpperCase();
+    if (!c) return;
+    db.ref("fabrics/" + c).set({
+        code: c, type: document.getElementById("type").value, comp: document.getElementById("comp").value,
+        width: document.getElementById("width").value, shrinkL: document.getElementById("shrinkL").value,
+        shrinkW: document.getElementById("shrinkW").value, wash: document.getElementById("wash").options[document.getElementById("wash").selectedIndex].text,
+        timestamp: new Date().getTime()
+    }).then(() => alert("Đã lưu!"));
+}
+
+function editFabric(fCode) {
+    const f = fabricCache.find(i => i.code === fCode);
+    if (f) {
+        document.getElementById("code").value = f.code; document.getElementById("type").value = f.type||"";
+        document.getElementById("comp").value = f.comp||""; document.getElementById("width").value = f.width||"";
+        document.getElementById("shrinkL").value = f.shrinkL||""; document.getElementById("shrinkW").value = f.shrinkW||"";
+        window.scrollTo({top:0, behavior:'smooth'});
+    }
+}
+
+function deleteFabric() {
+    const c = document.getElementById("code").value.trim().toUpperCase();
+    if (c && confirm("Xóa mã này?")) db.ref("fabrics/" + c).remove();
+}
+
+document.getElementById("searchBox").addEventListener("keyup", function() {
+    const q = this.value.toLowerCase();
+    renderTable(fabricCache.filter(f => (f.code||"").toLowerCase().includes(q) || (f.comp||"").toLowerCase().includes(q)));
+});
+</script>
+</body>
+</html>
